@@ -1,0 +1,244 @@
+version: v1
+mig-configs:
+  all-disabled:
+    - devices: all
+      mig-enabled: false
+
+  all-enabled:
+    - devices: all
+      mig-enabled: true
+      mig-devices: {}
+
+  all-1g.18gb:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "1g.18gb": 7
+
+  all-1g.18gb.me:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "1g.18gb+me": 1
+
+  all-2g.35gb:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "2g.35gb": 3
+
+  all-3g.71gb:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "3g.71gb": 2
+
+  all-4g.71gb:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "4g.71gb": 1
+
+  all-7g.141gb:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "7g.141gb": 1
+
+  all-mixed:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "1g.18gb": 2
+        "2g.35gb": 1
+        "3g.71gb": 1
+
+  2mig-mixed:
+    - devices: [0,1,2,3,4,5]
+      mig-enabled: false
+    - devices: [6]
+      mig-enabled: true
+      mig-devices:
+        "3g.71gb": 2
+    - devices: [7]
+      mig-enabled: true
+      mig-devices:
+        "1g.18gb": 2
+        "2g.35gb": 1
+        "3g.71gb": 1
+
+  2mig-balanced:
+    - devices: [0,1,2,3,4,5]
+      mig-enabled: false
+    - devices: [6]
+      mig-enabled: true
+      mig-devices:
+        "2g.35gb": 3
+    - devices: [7]
+      mig-enabled: true
+      mig-devices:
+        "2g.35gb": 3
+
+  2mig-optimized-balanced:
+    - devices: [0,1,2,3,4,5]
+      mig-enabled: false
+    - devices: [6]
+      mig-enabled: true
+      mig-devices:
+        "3g.71gb": 2
+    - devices: [7]
+      mig-enabled: true
+      mig-devices:
+        "3g.71gb": 2
+
+  2mig-diverse:
+    - devices: [0,1,2,3,4,5]
+      mig-enabled: false
+    - devices: [6]
+      mig-enabled: true
+      mig-devices:
+        "4g.71gb": 1
+        "3g.71gb": 1
+    - devices: [7]
+      mig-enabled: true
+      mig-devices:
+        "1g.18gb": 7
+
+  2mig-oneoff-balanced:
+    - devices: [0,1,2,3,4]
+      mig-enabled: false
+    - devices: [5]
+      mig-enabled: true
+      mig-devices:
+        "3g.71gb": 2
+    - devices: [6]
+      mig-enabled: true
+      mig-devices:
+        "3g.71gb": 2
+
+  4mig-mixed:
+    - devices: [0,1,2,3]
+      mig-enabled: false
+    - devices: [4,5,6,7]
+      mig-enabled: true
+      mig-devices:
+        "1g.18gb": 2      # GPU 4 is for tiny tasks
+        "2g.35gb": 1      # GPU 5 is for medium tasks
+        "3g.71gb": 1      # GPU 6 is for large inference
+
+  4mig-balanced:
+    - devices: [0,1,2,3]
+      mig-enabled: false
+    - devices: [4]
+      mig-enabled: true
+      mig-devices:
+        "2g.35gb": 3
+    - devices: [5]
+      mig-enabled: true
+      mig-devices:
+        "2g.35gb": 3
+    - devices: [6]
+      mig-enabled: true
+      mig-devices:
+        "2g.35gb": 3
+    - devices: [7]
+      mig-enabled: true
+      mig-devices:
+        "2g.35gb": 3
+
+  4mig-diverse:
+    - devices: [0,1,2,3]
+      mig-enabled: false
+    - devices: [4] # The "Big Instance" GPU
+      mig-enabled: true
+      mig-devices:
+        "7g.141gb": 1
+    - devices: [5] # The "Balanced" GPU
+      mig-enabled: true
+      mig-devices:
+        "3g.71gb": 2
+    - devices: [6] # The "Medium" GPU
+      mig-enabled: true
+      mig-devices:
+        "2g.35gb": 3
+    - devices: [7] # The "Density" GPU
+      mig-enabled: true
+      mig-devices:
+        "1g.18gb": 7
+
+  4mig-optimized-mixed:
+    - devices: [0,1,2,3]
+      mig-enabled: false
+    - devices: [4,5,6,7]
+      mig-enabled: true
+      mig-devices:
+        "1g.18gb": 2
+        "2g.35gb": 1
+        "3g.71gb": 1
+
+
+  # New: Maximum density inference/serving (great for many small models or batch inference)
+  8mig-dense:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "1g.18gb": 7
+
+  # New: All-GPU balanced medium instances (uniform, predictable, easy scheduling)
+  8mig-balanced:
+    - devices: all
+      mig-enabled: true
+      mig-devices:
+        "2g.35gb": 3
+
+  # New: 7 full GPUs + 1 "big" MIG instance (useful when you need one isolated full-capacity GPU in MIG mode)
+  1mig-big:
+    - devices: [0,1,2,3,4,5,6]
+      mig-enabled: false
+    - devices: [7]
+      mig-enabled: true
+      mig-devices:
+        "7g.141gb": 1
+
+  # New: 2 full + 6 MIG medium-balanced (higher partitioned density than your 2-GPU variants)
+  6mig-balanced:
+    - devices: [0,1]
+      mig-enabled: false
+    - devices: [2,3,4,5,6,7]
+      mig-enabled: true
+      mig-devices:
+        "2g.35gb": 3
+
+  # New: Media-accelerated inference (uses +me profile on density GPUs for video/transcoding workloads)
+  4mig-media-dense:
+    - devices: [0,1,2,3]
+      mig-enabled: false
+    - devices: [4,5,6,7]
+      mig-enabled: true
+      mig-devices:
+        "1g.18gb+me": 1   # Media extensions (NVDEC/JPEG/OFA)
+        "1g.18gb": 6
+
+  # New: Full-server role-based diverse (ultimate flexibility — one of each major type)
+  8mig-role-based:
+    - devices: [0]   # "Ultra-Big" GPU
+      mig-enabled: true
+      mig-devices:
+        "7g.141gb": 1
+    - devices: [1]   # "Large" GPU
+      mig-enabled: true
+      mig-devices:
+        "4g.71gb": 1
+        "3g.71gb": 1
+    - devices: [2,3] # "Balanced" GPUs
+      mig-enabled: true
+      mig-devices:
+        "2g.35gb": 3
+    - devices: [4,5] # "Medium-Dense" GPUs
+      mig-enabled: true
+      mig-devices:
+        "3g.71gb": 2
+    - devices: [6,7] # "Max-Density" GPUs
+      mig-enabled: true
+      mig-devices:
+        "1g.18gb": 7

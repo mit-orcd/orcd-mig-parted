@@ -1,0 +1,129 @@
+#!/bin/bash
+# ================================================
+# nvidia-mig - Clean wrapper for nvidia-mig-parted
+# Updated with 'status' command - managed by Salt
+# ================================================
+
+set -euo pipefail
+
+CONFIG_FILE="db/config.yaml"
+BINARY="./nvidia-mig-parted"
+PERSISTED_CONFIG="/etc/mig-config-name"
+BOOT_SERVICE="mig-config-apply"
+# Default install path on engaging nodes; override with MIG_PARTED_DIR if needed.
+MIG_DIR="${MIG_PARTED_DIR:-/home/systems/mig/mig-parted}"
+
+SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+cd "$(dirname "$SCRIPT")" 2>/dev/null || cd "$MIG_DIR" || {
+    echo "ERROR: Cannot cd to MIG install directory (tried $(dirname "$SCRIPT") and $MIG_DIR)" >&2
+    exit 1
+}
+
+list_configs() {
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "ERROR: Config file '$CONFIG_FILE' not found!" >&2
+        return 1
+    fi
+    echo "Available MIG configurations:"
+    python3 -c '
+import yaml, sys
+try:
+    with open("'"$CONFIG_FILE"'") as f:
+        data = yaml.safe_load(f)
+    configs = sorted(data.get("mig-configs", {}).keys())
+    for c in configs:
+        print("  • " + c)
+except Exception as e:
+    print("ERROR parsing YAML:", e, file=sys.stderr)
+    sys.exit(1)
+    ' 2>/dev/null || echo "   (Python YAML parser failed - falling back to grep)"
+}
+
+show_status() {
+    echo "=== NVIDIA MIG Status ==="
+    echo "Current MIG configuration on GPUs:"
+    nvidia-smi mig -lgi 2>/dev/null || echo "   (nvidia-smi mig command failed)"
+    echo ""
+    if [[ -f "$PERSISTED_CONFIG" ]]; then
+        echo "Boot-time config (from $PERSISTED_CONFIG): $(cat "$PERSISTED_CONFIG")"
+    else
+        echo "Boot-time config: NOT SET (no /etc/mig-config-name)"
+    fi
+    echo ""
+    echo "Boot service status:"
+    systemctl is-active --quiet "$BOOT_SERVICE" && echo "   $BOOT_SERVICE is ACTIVE" || echo "   $BOOT_SERVICE is INACTIVE"
+    systemctl is-enabled --quiet "$BOOT_SERVICE" 2>/dev/null && echo "   $BOOT_SERVICE is ENABLED at boot" || echo "   $BOOT_SERVICE is NOT enabled"
+}
+
+show_help() {
+    echo "Usage: nvidia-mig <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  apply <config-name>     Apply the specified MIG configuration"
+    echo "  status                  Show current MIG status + boot config"
+    echo "  list                    List all available MIG configurations"
+    echo "  help                    Show this help message"
+    echo ""
+    list_configs
+    echo ""
+    echo "Examples:"
+    echo "  nvidia-mig apply 4mig-diverse"
+    echo "  nvidia-mig status"
+    echo "  nvidia-mig list"
+}
+
+if [[ $# -eq 0 ]]; then
+    show_help
+    exit 0
+fi
+
+CMD="$1"
+shift
+
+case "$CMD" in
+    apply)
+        if [[ $# -eq 0 ]]; then
+            echo "ERROR: 'apply' requires a config name"
+            show_help
+            exit 1
+        fi
+        CONFIG_NAME="$1"
+        # Validate config exists
+        if ! python3 -c '
+import yaml, sys
+with open("'"$CONFIG_FILE"'") as f:
+    data = yaml.safe_load(f)
+if "'"${CONFIG_NAME}"'" not in data.get("mig-configs", {}):
+    sys.exit(1)
+' 2>/dev/null; then
+            echo "ERROR: Config '$CONFIG_NAME' not found"
+            list_configs
+            exit 1
+        fi
+        echo "Applying MIG configuration: $CONFIG_NAME"
+        echo "------------------------------------------------"
+        # Do not use exec with a pipeline: pipefail + grep can exit 1 when output is only filtered warnings.
+        "$BINARY" apply -f "$CONFIG_FILE" -c "$CONFIG_NAME" 2>&1 \
+            | grep -v "WARNING: unable to detect IOMMU FD" \
+            | grep -v "WARNING: unable to get device name" || [[ ${PIPESTATUS[0]} -eq 0 ]]
+        exit "${PIPESTATUS[0]:-$?}"
+        ;;
+
+    status)
+        show_status
+        ;;
+
+    list)
+        list_configs
+        ;;
+
+    help|--help|-h)
+        show_help
+        ;;
+
+    *)
+        echo "ERROR: Unknown command '$CMD'"
+        show_help
+        exit 1
+        ;;
+esac
