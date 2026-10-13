@@ -59,7 +59,7 @@ show_help() {
     echo "Usage: nvidia-mig <command> [options]"
     echo ""
     echo "Commands:"
-    echo "  apply <config-name>     Apply the specified MIG configuration"
+    echo "  apply <config-name>     Apply the MIG configuration and record it for the next boot"
     echo "  status                  Show current MIG status + boot config"
     echo "  list                    List all available MIG configurations"
     echo "  help                    Show this help message"
@@ -103,10 +103,20 @@ if "'"${CONFIG_NAME}"'" not in data.get("mig-configs", {}):
         echo "Applying MIG configuration: $CONFIG_NAME"
         echo "------------------------------------------------"
         # Do not use exec with a pipeline: pipefail + grep can exit 1 when output is only filtered warnings.
+        set +e
         "$BINARY" apply -f "$CONFIG_FILE" -c "$CONFIG_NAME" 2>&1 \
             | grep -v "WARNING: unable to detect IOMMU FD" \
-            | grep -v "WARNING: unable to get device name" || [[ ${PIPESTATUS[0]} -eq 0 ]]
-        exit "${PIPESTATUS[0]:-$?}"
+            | grep -v "WARNING: unable to get device name"
+        rc=${PIPESTATUS[0]}
+        set -e
+        if [[ "$rc" -eq 0 ]]; then
+            if printf '%s\n' "$CONFIG_NAME" > "$PERSISTED_CONFIG"; then
+                echo "Boot-time config recorded in $PERSISTED_CONFIG"
+            else
+                echo "WARNING: applied $CONFIG_NAME but could not write $PERSISTED_CONFIG" >&2
+            fi
+        fi
+        exit "$rc"
         ;;
 
     status)

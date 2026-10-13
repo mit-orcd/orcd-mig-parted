@@ -194,7 +194,7 @@ On reboot, `mig-config-apply.service` runs the boot script, which:
 
 The `/usr/local/sbin/nvidia-mig` symlink is for interactive use once `/home` is mounted; boot does **not** rely on it (exit 127 if NFS is late).
 
-`nvidia-mig status` shows the persisted name and whether `mig-config-apply` is active/enabled. Changing the long-term profile on a node means updating pillar `mig-server:state` and re-running the Salt state (or editing `/etc/mig-config-name` and rebooting, if you manage it outside Salt).
+`nvidia-mig status` shows the persisted name and whether `mig-config-apply` is active/enabled. A successful `nvidia-mig apply <name>` writes that name to `/etc/mig-config-name`, which is what the boot service reads. Salt pillar `mig-server:state` and `deploy-mig.sh --state` write the same file without requiring a manual apply.
 
 ### Ansible (alternate)
 
