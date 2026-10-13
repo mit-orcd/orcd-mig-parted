@@ -1,0 +1,17 @@
+---
+# Alternate to Salt state engaging.role.mig-server.
+# Run on the GPU node (or against it over SSH). This play copies nvidia-mig
+# and db/config.yaml; Salt's init.sls does not.
+#
+#   ansible-playbook deploy/ansible/playbook.yml -i inventory.ini -e mig_state=4mig-diverse
+#   ansible-playbook deploy/ansible/playbook.yml -i inventory.ini -e mig_apply_now=false
+#   ansible-playbook deploy/ansible/playbook.yml -i inventory.ini \
+#       -e mig_state=4mig-diverse -e mig_parted_binary_src=/path/to/nvidia-mig-parted
+
+- name: Deploy ORCD MIG parted
+  hosts: mig_servers
+  become: true
+  vars:
+    mig_repo_root: "{{ playbook_dir }}/../.."
+  roles:
+    - role: mig-server

@@ -1,6 +1,10 @@
 # ===================================================================
 # SaltStack State: engaging/role/mig-server/init.sls
 # FIXED VERSION – stops stuck service first + no hang on Salt apply
+#
+# Alternates that perform the same node setup (and also copy nvidia-mig
+# and db/config.yaml): deploy/deploy-mig.sh and deploy/ansible/.
+# Keep the boot script and unit in those copies in sync with this file.
 # ===================================================================
 
 {% set mig_dir = "/home/systems/mig/mig-parted" %}

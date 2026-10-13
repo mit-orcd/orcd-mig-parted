@@ -1,0 +1,25 @@
+---
+# Mirrors pillar mig-server:state. Empty installs boot integration only
+# and does not write or remove /etc/mig-config-name.
+mig_state: ""
+
+# When false, write the boot config but do not run nvidia-mig apply.
+mig_apply_now: true
+
+mig_dir: /home/systems/mig/mig-parted
+mig_symlink_path: /usr/local/sbin/nvidia-mig
+mig_persistent_config: /etc/mig-config-name
+mig_boot_script: /usr/local/sbin/apply-mig-on-boot.sh
+mig_unit_path: /etc/systemd/system/mig-config-apply.service
+mig_apply_log: /var/log/mig-apply.log
+mig_apply_timeout: 180
+mig_boot_wait_secs: 300
+mig_boot_wait_interval: 5
+
+# Checkout that contains nvidia-mig and db/config.yaml.
+# The playbook sets this to the repo root. Override if the role is used elsewhere.
+mig_repo_root: ""
+
+# Optional path on the controller to the upstream nvidia-mig-parted binary.
+# Leave empty to keep whatever is already installed under mig_dir.
+mig_parted_binary_src: ""

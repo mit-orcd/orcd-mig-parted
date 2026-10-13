@@ -1,0 +1,222 @@
+---
+# Same node result as mig-server/init.sls, plus the file copy from deploy-repo.sls.
+# The unit is enabled and not started. An immediate apply runs only when
+# mig_state is set, mig_apply_now is true, and MIG is not already enabled.
+
+- name: Require the orcd-mig-parted checkout path
+  ansible.builtin.assert:
+    that:
+      - mig_repo_root | length > 0
+    fail_msg: >-
+      Set mig_repo_root to the orcd-mig-parted checkout.
+      deploy/ansible/playbook.yml sets it to the repository root.
+
+- name: Require a safe MIG profile name
+  ansible.builtin.assert:
+    that:
+      - mig_state is match('^[A-Za-z0-9][A-Za-z0-9._-]*$')
+    fail_msg: "mig_state must be a profile name from db/config.yaml."
+  when: mig_state | length > 0
+
+- name: Confirm the requested profile is defined in db/config.yaml
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import sys
+        path, name = sys.argv[1], sys.argv[2]
+        try:
+            import yaml
+        except ImportError:
+            yaml = None
+        if yaml is not None:
+            with open(path) as handle:
+                data = yaml.safe_load(handle) or {}
+            if name not in data.get("mig-configs", {}):
+                sys.stderr.write("profile %r is not in %s\n" % (name, path))
+                sys.exit(1)
+            sys.exit(0)
+        prefix = "  " + name + ":"
+        with open(path) as handle:
+            if any(line.startswith(prefix) for line in handle):
+                sys.exit(0)
+        sys.stderr.write("profile %r is not in %s\n" % (name, path))
+        sys.exit(1)
+      - "{{ mig_repo_root }}/db/config.yaml"
+      - "{{ mig_state }}"
+  delegate_to: localhost
+  become: false
+  when: mig_state | length > 0
+  changed_when: false
+  check_mode: false
+
+- name: Check for an existing mig-config-apply unit
+  ansible.builtin.stat:
+    path: "{{ mig_unit_path }}"
+  register: mig_existing_unit
+
+- name: Stop mig-config-apply before replacing unit files
+  ansible.builtin.command: timeout 30 systemctl stop mig-config-apply
+  when:
+    - mig_existing_unit.stat.exists
+    - not ansible_check_mode
+  changed_when: false
+  failed_when: false
+
+- name: Create the MIG install directory
+  ansible.builtin.file:
+    path: "{{ mig_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create the MIG config directory
+  ansible.builtin.file:
+    path: "{{ mig_dir }}/db"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy the nvidia-mig wrapper
+  ansible.builtin.copy:
+    src: "{{ mig_repo_root }}/nvidia-mig"
+    dest: "{{ mig_dir }}/nvidia-mig"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy the MIG profile library
+  ansible.builtin.copy:
+    src: "{{ mig_repo_root }}/db/config.yaml"
+    dest: "{{ mig_dir }}/db/config.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy the nvidia-mig-parted binary
+  ansible.builtin.copy:
+    src: "{{ mig_parted_binary_src }}"
+    dest: "{{ mig_dir }}/nvidia-mig-parted"
+    owner: root
+    group: root
+    mode: "0755"
+  when: mig_parted_binary_src | length > 0
+
+- name: Install the nvidia-mig symlink
+  ansible.builtin.file:
+    src: "{{ mig_dir }}/nvidia-mig"
+    dest: "{{ mig_symlink_path }}"
+    state: link
+    force: true
+
+- name: Persist the boot profile name
+  ansible.builtin.copy:
+    dest: "{{ mig_persistent_config }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ mig_state }}\n"
+  when: mig_state | length > 0
+
+- name: Install the boot apply script
+  ansible.builtin.template:
+    src: apply-mig-on-boot.sh.j2
+    dest: "{{ mig_boot_script }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install mig-config-apply.service
+  ansible.builtin.template:
+    src: mig-config-apply.service.j2
+    dest: "{{ mig_unit_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable mig-config-apply without starting it
+  ansible.builtin.systemd:
+    name: mig-config-apply
+    enabled: true
+    daemon_reload: true
+
+- name: Require PyYAML on the node before an immediate apply
+  ansible.builtin.command: python3 -c "import yaml"
+  register: mig_pyyaml
+  changed_when: false
+  failed_when: false
+  when:
+    - mig_state | length > 0
+    - mig_apply_now | bool
+    - not ansible_check_mode
+
+- name: Fail when python3-pyyaml is missing
+  ansible.builtin.fail:
+    msg: >-
+      python3-pyyaml is required on the node before nvidia-mig apply.
+      Install it, or re-run with -e mig_apply_now=false.
+  when:
+    - mig_state | length > 0
+    - mig_apply_now | bool
+    - not ansible_check_mode
+    - mig_pyyaml.rc | default(1) != 0
+
+- name: Check for the upstream nvidia-mig-parted binary
+  ansible.builtin.stat:
+    path: "{{ mig_dir }}/nvidia-mig-parted"
+  register: mig_binary
+
+- name: Check that the wrapper is executable
+  ansible.builtin.stat:
+    path: "{{ mig_dir }}/nvidia-mig"
+  register: mig_wrapper
+
+- name: Fail when a profile apply was requested without nvidia-mig-parted
+  ansible.builtin.fail:
+    msg: >-
+      {{ mig_dir }}/nvidia-mig-parted is missing.
+      Pass -e mig_parted_binary_src=/path/to/nvidia-mig-parted
+      or install the binary before applying a profile.
+      Re-run with -e mig_apply_now=false to install boot integration only.
+  when:
+    - mig_state | length > 0
+    - mig_apply_now | bool
+    - not mig_binary.stat.exists
+    - not ansible_check_mode
+
+- name: Apply the MIG profile now
+  ansible.builtin.shell: |
+    set -o pipefail
+    (
+      echo "$(date) === Ansible immediate MIG apply starting: ${MIG_STATE} ==="
+      if nvidia-smi mig -lgi 2>/dev/null | grep -q "MIG.*Enabled"; then
+        echo "MIG already enabled → skipping apply"
+        exit 0
+      fi
+      timeout "${MIG_APPLY_TIMEOUT}" /bin/bash "${MIG_WRAPPER}" apply "${MIG_STATE}"
+      rc=$?
+      echo "$(date) === Ansible immediate MIG apply finished ==="
+      exit "$rc"
+    ) 2>&1 | tee "${APPLY_LOG}"
+    exit "${PIPESTATUS[0]}"
+  args:
+    executable: /bin/bash
+  environment:
+    MIG_STATE: "{{ mig_state }}"
+    MIG_WRAPPER: "{{ mig_dir }}/nvidia-mig"
+    MIG_APPLY_TIMEOUT: "{{ mig_apply_timeout }}"
+    APPLY_LOG: "{{ mig_apply_log }}"
+  register: mig_apply_result
+  changed_when: "'skipping apply' not in mig_apply_result.stdout"
+  when:
+    - mig_state | length > 0
+    - mig_apply_now | bool
+    - mig_wrapper.stat.executable | default(false)
+    - not ansible_check_mode

@@ -8,7 +8,7 @@ A thin wrapper and curated MIG configuration library for [MIT ORCD](https://orcd
 
 This repository provides:
 
-- **`nvidia-mig`** — a small Bash CLI used on engaging nodes (deployed and managed via Salt).
+- **`nvidia-mig`** — a small Bash CLI used on engaging nodes. Engaging deploys it with Salt today; this repo also includes an Ansible role and a manual script that perform the same node setup.
 - **`db/config.yaml`** — MIG profiles for engaging **8-GPU** nodes (e.g. 8× A100-class).
 
 On a live server, the wrapper expects the upstream binary and configs to live under `/home/systems/mig/mig-parted` (see [Deployment](#deployment)).
@@ -112,7 +112,7 @@ Before or alongside the Salt role, ensure `/home/systems/mig/mig-parted` contain
 | `db/config.yaml` | This repo |
 | `nvidia-mig-parted` | [NVIDIA/mig-parted](https://github.com/NVIDIA/mig-parted) binary |
 
-The Salt state creates the install directory and boot integration; it does **not** copy the wrapper, YAML, or upstream binary (those are deployed by your existing engaging file-sync or packaging process).
+The Salt state creates the install directory and boot integration; it does **not** copy the wrapper, YAML, or upstream binary (those are deployed by your existing engaging file-sync or packaging process). The [Ansible role](#ansible-alternate) and [`deploy/deploy-mig.sh`](#manual-script-alternate) copy `nvidia-mig` and `db/config.yaml` themselves. The upstream `nvidia-mig-parted` binary is still supplied separately.
 
 ### Pillar: desired MIG profile
 
@@ -196,13 +196,79 @@ The `/usr/local/sbin/nvidia-mig` symlink is for interactive use once `/home` is 
 
 `nvidia-mig status` shows the persisted name and whether `mig-config-apply` is active/enabled. Changing the long-term profile on a node means updating pillar `mig-server:state` and re-running the Salt state (or editing `/etc/mig-config-name` and rebooting, if you manage it outside Salt).
 
+### Ansible (alternate)
+
+[`deploy/ansible/`](deploy/ansible/) is a standalone playbook for the same layout. It does not talk to the Salt master. Use it when a node is not a minion, or when you want the wrapper and `db/config.yaml` copied from this checkout.
+
+It follows `mig-server/init.sls`: stop `mig-config-apply` if the unit is already installed, create `/home/systems/mig/mig-parted`, symlink `/usr/local/sbin/nvidia-mig`, install the boot script and oneshot unit, `daemon-reload`, and **enable** the unit without starting it. When `mig_state` is set it writes `/etc/mig-config-name` and runs the same immediate apply (180s timeout, skip if `nvidia-smi mig -lgi` already shows MIG enabled, log `/var/log/mig-apply.log`). An empty `mig_state` leaves `/etc/mig-config-name` untouched.
+
+Differences from Salt:
+
+| | Salt `init.sls` | Ansible role |
+|--|-----------------|--------------|
+| Copies `nvidia-mig` and `db/config.yaml` | No (see `deploy-repo.sls`) | Yes, from this repo |
+| Profile name | Pillar `mig-server:state` | Extra var `mig_state` |
+| Unknown profile name | Fails inside `nvidia-mig apply` | Fails before apply if the name is missing from the YAML |
+| Immediate apply failure | Pipeline can still report success | Play fails with the apply exit code |
+| Upstream binary | Not in git | Optional `-e mig_parted_binary_src=/path/to/nvidia-mig-parted` |
+
+On a machine that can SSH to the node as root:
+
+```bash
+cp deploy/ansible/inventory.example.ini deploy/ansible/inventory.ini
+# edit inventory.ini: one hostname per GPU node
+
+ansible-playbook deploy/ansible/playbook.yml -i deploy/ansible/inventory.ini \
+  -e mig_state=4mig-diverse
+
+# install files and boot integration, do not change GPU layout
+ansible-playbook deploy/ansible/playbook.yml -i deploy/ansible/inventory.ini \
+  -e mig_apply_now=false
+
+# also copy a local nvidia-mig-parted binary
+ansible-playbook deploy/ansible/playbook.yml -i deploy/ansible/inventory.ini \
+  -e mig_state=4mig-diverse \
+  -e mig_parted_binary_src=/path/to/nvidia-mig-parted
+```
+
+`ansible-playbook --check` previews file changes and does not run the GPU apply. Applying a profile reconfigures GPUs; use a maintenance window on production nodes.
+
+`mig_state` accepts the same names as pillar (`4mig-diverse`, `all-disabled`, and the rest of `db/config.yaml`). Paths match the Salt install (`mig_dir`, boot script, unit, log) and can be overridden as role variables; see [`deploy/ansible/roles/mig-server/defaults/main.yml`](deploy/ansible/roles/mig-server/defaults/main.yml).
+
+### Manual script (alternate)
+
+[`deploy/deploy-mig.sh`](deploy/deploy-mig.sh) is the same procedure as the Ansible role, run on the node as root. No Ansible or Salt is required. It reads `nvidia-mig` and `db/config.yaml` from this checkout (or from `--src`).
+
+```bash
+# preview
+./deploy/deploy-mig.sh --dry-run --state 4mig-diverse
+
+# install and apply a profile
+sudo ./deploy/deploy-mig.sh --state 4mig-diverse
+
+# include the upstream binary
+sudo ./deploy/deploy-mig.sh --state 4mig-diverse --binary /path/to/nvidia-mig-parted
+
+# directory, symlink, and systemd unit only
+sudo ./deploy/deploy-mig.sh --no-apply
+```
+
+`--state` is optional. Without it the script does not write `/etc/mig-config-name` and does not apply a layout. `--no-apply` still writes `/etc/mig-config-name` when `--state` is set, so the next boot can apply it. The script refuses a profile name that is not in `db/config.yaml`, and it refuses to apply when `nvidia-mig-parted` is not already in the install directory and `--binary` was not given.
+
+After either alternate:
+
+```bash
+nvidia-mig status
+tail -f /var/log/mig-apply.log
+```
+
 ## Adding or changing profiles
 
 1. Edit `db/config.yaml`.
 2. Follow upstream rules: device indices, valid MIG profile strings for your GPU SKU, and consistent `version: v1`.
 3. Validate syntax: `python3 -c "import yaml; yaml.safe_load(open('db/config.yaml'))"`.
 4. Test on a maintenance window: `nvidia-mig apply <new-name>` then `nvidia-mig status` and `nvidia-smi mig -lgi`.
-5. Update pillar `mig-server:state` if the node should use the new profile at boot, then run `salt-call state.apply engaging.role.mig-server`.
+5. Update pillar `mig-server:state` if the node should use the new profile at boot, then run `salt-call state.apply engaging.role.mig-server`. On a node deployed with Ansible or `deploy/deploy-mig.sh`, pass the same name as `mig_state` or `--state` and run that path again.
 
 Use [`nvidia-mig-parted export`](https://github.com/NVIDIA/mig-parted#export-the-current-mig-config) on a manually configured node to capture an existing layout as a starting point.
 
@@ -224,7 +290,7 @@ This section records cross-checks across `nvidia-mig`, `mig-server/init.sls`, `d
 
 | Gap | Risk | Recommended solution |
 |-----|------|----------------------|
-| Salt does not deploy `nvidia-mig`, `db/config.yaml`, or `nvidia-mig-parted` | Symlink or apply runs before files exist; pillar apply silently skipped (`onlyif: test -x wrapper`) | Enable [`mig-server/deploy-repo.sls`](mig-server/deploy-repo.sls): mirror repo files to `salt://engaging/role/mig-server/files/` (CI/gitfs), `include` from `init.sls`, require `deploy-*` before `nvidia-mig-symlink` |
+| Salt does not deploy `nvidia-mig`, `db/config.yaml`, or `nvidia-mig-parted` | Symlink or apply runs before files exist; pillar apply silently skipped (`onlyif: test -x wrapper`) | Enable [`mig-server/deploy-repo.sls`](mig-server/deploy-repo.sls), or use the [Ansible role](#ansible-alternate) / [`deploy/deploy-mig.sh`](#manual-script-alternate), which copy the wrapper and YAML |
 | No Salt check that pillar profile exists in YAML | `nvidia-mig apply` fails at runtime | Add `cmd.run` with `nvidia-mig list` + grep, or `file.serialize` validation in CI |
 | Boot / Salt skip when “MIG enabled”, not when “desired profile applied” | Changing `mig-server:state` does not re-layout GPUs until manual `nvidia-mig apply` or MIG reset | Document as policy; optional: compare `nvidia-mig-parted assert -f … -c <name>` in boot script instead of grep |
 | `list_configs` claims grep fallback but does not grep | Misleading error when PyYAML missing | Install `python3-pyyaml` in base image, or implement grep fallback |
@@ -269,6 +335,9 @@ All names in the README tables exist in `db/config.yaml` (24 profiles). Partial 
 ├── mig-server/
 │   ├── init.sls        # Salt state (engaging.role.mig-server)
 │   └── deploy-repo.sls # optional file.deploy from Salt fileserver
+├── deploy/
+│   ├── deploy-mig.sh   # manual install on the node
+│   └── ansible/        # Ansible playbook and mig-server role
 └── db/
     └── config.yaml     # MIG profiles
 ```

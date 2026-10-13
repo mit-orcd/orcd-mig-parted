@@ -1,0 +1,20 @@
+# Installed by the mig-server Ansible role.
+# Keep in sync with mig-server/init.sls and deploy/deploy-mig.sh.
+[Unit]
+Description=Apply NVIDIA MIG configuration on boot
+After=network-online.target remote-fs.target
+Before=slurmd.service
+Wants=network-online.target remote-fs.target
+RequiresMountsFor={{ mig_dir }}
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart={{ mig_boot_script }}
+TimeoutStartSec=600
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

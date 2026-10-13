@@ -1,0 +1,36 @@
+#!/bin/bash
+# Installed by the mig-server Ansible role.
+# Keep in sync with mig-server/init.sls and deploy/deploy-mig.sh.
+set -euo pipefail
+CONFIG_FILE="{{ mig_persistent_config }}"
+MIG_WRAPPER="{{ mig_dir }}/nvidia-mig"
+MIG_DIR="{{ mig_dir }}"
+WAIT_SECS={{ mig_boot_wait_secs }}
+WAIT_INTERVAL={{ mig_boot_wait_interval }}
+
+wait_for_mig_wrapper() {
+  local elapsed=0
+  while [ ! -x "$MIG_WRAPPER" ]; do
+    if [ "$elapsed" -ge "$WAIT_SECS" ]; then
+      echo "ERROR: $MIG_WRAPPER not executable after ${WAIT_SECS}s (check /home NFS mount)" | tee -a "{{ mig_apply_log }}"
+      return 1
+    fi
+    echo "$(date) waiting for $MIG_WRAPPER (${elapsed}s, /home mount?)" | tee -a "{{ mig_apply_log }}"
+    sleep "$WAIT_INTERVAL"
+    elapsed=$((elapsed + WAIT_INTERVAL))
+  done
+}
+
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "No MIG config defined. Skipping." | tee -a "{{ mig_apply_log }}"
+    exit 0
+fi
+wait_for_mig_wrapper || exit 1
+if nvidia-smi mig -lgi 2>/dev/null | grep -q "MIG.*Enabled"; then
+    echo "MIG already enabled → skipping apply" | tee -a "{{ mig_apply_log }}"
+    exit 0
+fi
+CONFIG_NAME=$(cat "$CONFIG_FILE")
+echo "$(date) === MIG boot apply starting: $CONFIG_NAME ===" | tee -a "{{ mig_apply_log }}"
+/bin/bash "$MIG_WRAPPER" apply "$CONFIG_NAME" 2>&1 | tee -a "{{ mig_apply_log }}"
+echo "$(date) === MIG boot apply completed ===" | tee -a "{{ mig_apply_log }}"
